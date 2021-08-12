@@ -11,6 +11,7 @@ import multiprocessing as mp
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import pyarrow.feather as feather
+from functions import *
 
 
 # ###################
@@ -663,6 +664,8 @@ breakdown = breakdown[['jdate','20%','40%','60%','80%']]
 
 
 
+
+
 chars = pd.merge(df_rank, breakdown, how='left', on=['jdate'])
 
 with open('chars_q.feather', 'wb') as f:
@@ -700,18 +703,7 @@ funda = pd.read_pickle('./funda_chn_2000.pkl')
 funda = funda[ (funda['exchg'] == 249) | (funda['exchg'] == 250)] # shanghai / shenzhen
 
 
-
-
-
-
-
-
-
-
 funda = funda.sort_values(['gvkey','datadate','exchg','isin','sedol','seq'])
-
-
-
 
 
 funda['txdb'] = funda['txdb'].fillna(0)
@@ -752,14 +744,15 @@ funda['be'] = funda['seq'] + funda['txdb'] + funda['txt'] - funda['pstk']
 
 fundamental_varlist=[
     # id
-    'gvkey', 'indfmt', 'consol', 'popsrc', 'datafmt','exchg', 'loc','fic', 'sedol', 'isin','datadate','pdate','fdate','fyr',
+    'gvkey', 'indfmt', 'consol', 'popsrc', 'datafmt','exchg', 'loc','fic', 'sedol', 'isin','datadate','pdate','fdate','fyr', 'sich',
     # varaibles we want 
     'ib',
     'seq','txdb','txt','pstk','dp','at',
     'che','act','gdwl','intan','ceq',
     'ivao','dlc','dltt','mib','sale',
     'lt','ppent','revt','cogs',
-    'rect','aco','ap','lco','lo','invt','ao','xint','xsga','be', 'oiadp', 'oancf', 'lct', 'np', 'txp'
+    'rect','aco','ap','lco','lo','invt','ao','xint','xsga','be', 'oiadp', 'oancf', 'lct', 'np', 'txp',
+    'sale'
     ]
 funda = funda[fundamental_varlist]
 
@@ -791,16 +784,13 @@ fasm = pd.merge(secm, funda, how='left', on=['gvkey','jdate','exchg','isin','sed
 # # Forward Fill the Fundq info to Empty Month
 
 
-
-
-
 fasm.columns = ['gvkey', 'exchg', 'loc', 'fic', 'iid', 'sedol', 'isin',
        'datadate_secm', 'cshoc', 'prccd', 'me', 'retm', 'jdate', 'indfmt',
        'consol', 'popsrc', 'datafmt', 'datadate_funda', 'pdate', 'fdate',
-       'fyr', 'ib', 'seq', 'txdb', 'txt', 'pstk', 'dp', 'at', 'che',
+       'fyr','sich', 'ib', 'seq', 'txdb', 'txt', 'pstk', 'dp', 'at', 'che',
        'act', 'gdwl', 'intan', 'ceq', 'ivao', 'dlc', 'dltt', 'mib',
        'sale', 'lt', 'ppent', 'revt', 'cogs', 'rect', 'aco', 'ap', 'lco',
-       'lo', 'invt', 'ao', 'xint', 'xsga','be', 'oiadp', 'oancf', 'lct', 'np', 'txp']
+       'lo', 'invt', 'ao', 'xint', 'xsga','be', 'oiadp', 'oancf', 'lct', 'np', 'txp','sale']
 
 
 
@@ -821,13 +811,40 @@ fasm['be'] = fasm.groupby('gvkey')['be'].fillna(method='ffill')
 
 fasm['me'] = fasm['me']/1e6 # 1e6 is one million
 
-
-
-
-
 fasm['bm'] = fasm['be']/fasm['me']
 fasm['mb'] = fasm['me']/fasm['be']
 
+#ffi49
+fasm = fasm.rename(columns={'sich':'sic'})
+fasm['ffi49'] = ffi49(fasm)
+fasm['ffi49'] = fasm['ffi49'].fillna(49)
+fasm['ffi49'] = fasm['ffi49'].astype(int)
+
+# bm_ia
+df = fasm.dropna(subset =['datadate_funda'])
+df_temp = df.groupby(['datadate_funda', 'ffi49'])['bm'].mean().reset_index()
+df_temp = df_temp.rename(columns={'bm': 'bm_ind'})
+fasm = pd.merge(fasm, df_temp, how='left', on=['datadate_funda', 'ffi49'])
+fasm['bm_ia'] = fasm['bm']/fasm['bm_ind']
+
+# me_ia
+df = fasm.dropna(subset =['datadate_funda'])
+df_temp = df.groupby(['datadate_funda', 'ffi49'])['me'].mean().reset_index()
+df_temp = df_temp.rename(columns={'me': 'me_ind'})
+fasm = pd.merge(fasm, df_temp, how='left', on=['datadate_funda', 'ffi49'])
+fasm['me_ia'] = fasm['me']/fasm['me_ind']
+
+# herf
+# df_temp = fasm.groupby(['datadate_funda', 'ffi49'])['sale'].sum()
+
+# df = fasm.dropna(subset =['datadate_funda','sale'])
+# df_temp = df.groupby(['datadate_funda', 'ffi49'])['sale'].sum().reset_index()
+# df_temp = df_temp.rename(columns={'sale': 'indsale'})
+# data_rawa = pd.merge(data_rawa, df_temp, how='left', on=['datadate', 'ffi49'])
+# data_rawa['herf'] = (data_rawa['sale']/data_rawa['indsale'])*(data_rawa['sale']/data_rawa['indsale'])
+# df_temp = data_rawa.groupby(['datadate', 'ffi49'], as_index=False)['herf'].sum()
+# data_rawa = data_rawa.drop(['herf'], axis=1)
+# data_rawa = pd.merge(data_rawa, df_temp, how='left', on=['datadate', 'ffi49'])
 
 # ep
 fasm['ep'] = fasm['ib']/fasm['me']
@@ -1174,6 +1191,8 @@ fasm['pctacc'] = np.select(condlist, choicelist, default=(fasm['ib']-fasm['oancf
 #pm
 fasm['pm'] = fasm['oiadp']/fasm['sale']
 
+
+
 print('fasm')
 
 def standardize1(df):
@@ -1228,6 +1247,10 @@ with open('chars_a_rank.feather', 'wb') as f:
                               'rank_chtx', 'rank_lt_l1', 'rank_ceq_l1', 'rank_invt', 'rank_pctacc', 'rank_fyr', 'rank_acc',
                               'rank_lgr', 'rank_noa', 'rank_grltnoa', 'rank_ao', 'rank_roa', 'rank_np', 'rank_lt', 'rank_at_l1',
                               'rank_bm', 'rank_gma']], f)
+
+###########functions import #########
+
+
 
 
 
